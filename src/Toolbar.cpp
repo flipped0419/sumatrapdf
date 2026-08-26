@@ -181,7 +181,7 @@ struct ToolbarIconButton : VirtIconButton {
             drop.dx = dropDx;
         }
 
-        int radius = DpiScale(6);
+        int radius = DpiScale(10);
         Color bgSel = GetColor(kColIconBtnBgSelected);
         if (isSelected && enabled && bgSel != kColorUnset) {
             ctx.gfx->FillRoundedRect(action, radius, bgSel);
@@ -783,7 +783,11 @@ void TogglePdfAnnotationsToolbar(MainWindow* win) {
 // toolbar mode for this window: Fullscreen.Toolbar in fullscreen, else Toolbar
 static int ToolbarModeForWindow(MainWindow* win) {
     if (win->isFullScreen) {
-        return FullscreenToolbarModeFromPrefs();
+        int mode = FullscreenToolbarModeFromPrefs();
+        // Modern fork: fullscreen doubles as a distraction-free reading mode.
+        // Preserve an explicit pinned toolbar, otherwise reveal it only when
+        // the pointer touches the top edge instead of hiding it permanently.
+        return mode == kToolbarShow ? kToolbarShow : kToolbarOverlay;
     }
     return ToolbarModeFromPrefs();
 }

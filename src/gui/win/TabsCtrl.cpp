@@ -204,7 +204,8 @@ void TabCtrl::SetBounds(Rect r) {
 // like Chrome: only the selected tab shows (and hit-tests) its ✕, so a click
 // on a non-selected tab always selects it and can't accidentally close it
 bool TabCtrl::CloseVisible() {
-    return ti->canClose && IsSelected();
+    // Browser-style tabs keep the close affordance visible, like Edge.
+    return ti->canClose;
 }
 
 void TabCtrl::Paint(VirtPaintCtx& ctx) {
@@ -219,7 +220,15 @@ void TabCtrl::Paint(VirtPaintCtx& ctx) {
         textColor = IsLightColor(tabBgCol) ? MkRgb(0xC4, 0x1E, 0x1E) : MkRgb(0xFF, 0x6A, 0x6A);
     }
 
-    gfx->FillRect(r, tabBgCol);
+    // Edge-style tab card: leave a small gutter between tabs and round
+    // the painted surface without changing hit-testing or drag geometry.
+    Rect tabSurface = r;
+    int gap = DpiScale(2);
+    tabSurface.x += gap;
+    tabSurface.dx = std::max(0, tabSurface.dx - (gap * 2));
+    tabSurface.y += gap;
+    tabSurface.dy = std::max(0, tabSurface.dy - gap);
+    gfx->FillRoundedRect(tabSurface, DpiScale(IsSelected() ? 10 : 8), tabBgCol);
 
     bool isRtl = IsTabsRtl(hwnd);
     PlatformFont* font = tabsCtrl->GetFont();
