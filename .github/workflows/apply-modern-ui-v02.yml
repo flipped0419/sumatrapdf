@@ -1,0 +1,192 @@
+name: Apply Modern UI v0.2
+
+on:
+  push:
+    branches:
+      - modern-ui/v0.1-shell
+    paths:
+      - .github/workflows/apply-modern-ui-v02.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    name: Apply Edge-style shell and Fluent PDF icon
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Patch modern shell v0.2
+        shell: python
+        run: |
+          from pathlib import Path
+          import binascii, struct, zlib
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text(encoding="utf-8")
+              if old not in s:
+                  raise SystemExit(f"expected text not found in {path}: {old[:80]!r}")
+              s = s.replace(old, new, 1)
+              p.write_text(s, encoding="utf-8", newline="")
+
+          # Make toolbar hover/selected surfaces visibly rounded.
+          replace_once(
+              "src/Toolbar.cpp",
+              "int radius = DpiScale(6);",
+              "int radius = DpiScale(10);",
+          )
+
+          # F11/windowed fullscreen becomes the requested borderless reading mode:
+          # no pinned chrome, but the existing overlay toolbar appears on top-edge hover.
+          replace_once(
+              "src/Toolbar.cpp",
+              """static int ToolbarModeForWindow(MainWindow* win) {
+              if (win->isFullScreen) {
+                  return FullscreenToolbarModeFromPrefs();
+              }
+              return ToolbarModeFromPrefs();
+          }""",
+              """static int ToolbarModeForWindow(MainWindow* win) {
+              if (win->isFullScreen) {
+                  int mode = FullscreenToolbarModeFromPrefs();
+                  // Modern fork: fullscreen doubles as a distraction-free reading mode.
+                  // Preserve an explicit pinned toolbar, otherwise reveal it only when
+                  // the pointer touches the top edge instead of hiding it permanently.
+                  return mode == kToolbarShow ? kToolbarShow : kToolbarOverlay;
+              }
+              return ToolbarModeFromPrefs();
+          }""",
+          )
+
+          # Edge-like tabs: rounded cards with small gutters and close buttons on every tab.
+          replace_once(
+              "src/gui/win/TabsCtrl.cpp",
+              """bool TabCtrl::CloseVisible() {
+              return ti->canClose && IsSelected();
+          }""",
+              """bool TabCtrl::CloseVisible() {
+              // Browser-style tabs keep the close affordance visible, like Edge.
+              return ti->canClose;
+          }""",
+          )
+          replace_once(
+              "src/gui/win/TabsCtrl.cpp",
+              "    gfx->FillRect(r, tabBgCol);",
+              """    // Edge-style tab card: leave a small gutter between tabs and round
+              // the painted surface without changing hit-testing or drag geometry.
+              Rect tabSurface = r;
+              int gap = DpiScale(2);
+              tabSurface.x += gap;
+              tabSurface.dx = std::max(0, tabSurface.dx - (gap * 2));
+              tabSurface.y += gap;
+              tabSurface.dy = std::max(0, tabSurface.dy - gap);
+              gfx->FillRoundedRect(tabSurface, DpiScale(IsSelected() ? 10 : 8), tabBgCol);""",
+          )
+
+          # Generate an original Fluent-style PDF icon (not Microsoft's proprietary Edge icon).
+          def png_chunk(kind, data):
+              return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", binascii.crc32(kind + data) & 0xffffffff)
+
+          def rounded_rect_hit(x, y, x0, y0, x1, y1, rad):
+              if x0 + rad <= x < x1 - rad or y0 + rad <= y < y1 - rad:
+                  return x0 <= x < x1 and y0 <= y < y1
+              cx = x0 + rad if x < x0 + rad else x1 - rad - 1
+              cy = y0 + rad if y < y0 + rad else y1 - rad - 1
+              return (x - cx) ** 2 + (y - cy) ** 2 <= rad ** 2
+
+          def make_png(n):
+              px = bytearray(n * n * 4)
+              def put(x, y, c):
+                  if 0 <= x < n and 0 <= y < n:
+                      i = (y * n + x) * 4
+                      px[i:i+4] = bytes(c)
+
+              # Fluent red tile.
+              m = max(1, round(n * 0.06))
+              rad = max(2, round(n * 0.20))
+              for y in range(n):
+                  for x in range(n):
+                      if rounded_rect_hit(x, y, m, m, n-m, n-m, rad):
+                          put(x, y, (214, 57, 57, 255))
+
+              # White document sheet.
+              x0, x1 = round(n * 0.27), round(n * 0.73)
+              y0, y1 = round(n * 0.18), round(n * 0.81)
+              sr = max(1, round(n * 0.045))
+              for y in range(y0, y1):
+                  for x in range(x0, x1):
+                      if rounded_rect_hit(x, y, x0, y0, x1, y1, sr):
+                          put(x, y, (255, 255, 255, 255))
+
+              # Folded corner cut/fold.
+              fold = max(2, round(n * 0.16))
+              for yy in range(fold):
+                  for xx in range(fold - yy):
+                      x = x1 - 1 - xx
+                      y = y0 + yy
+                      put(x, y, (214, 57, 57, 255))
+              for yy in range(fold):
+                  for xx in range(yy + 1):
+                      x = x1 - fold + xx
+                      y = y0 + yy
+                      put(x, y, (245, 205, 205, 255))
+
+              # Three simple red lines suggest PDF text and stay legible at 16px.
+              line_h = max(1, round(n * 0.035))
+              for frac_y, width in ((0.48, 0.28), (0.59, 0.34), (0.70, 0.23)):
+                  yy = round(n * frac_y)
+                  lx0 = round(n * 0.34)
+                  lx1 = lx0 + round(n * width)
+                  for y in range(yy, min(n, yy + line_h)):
+                      for x in range(lx0, min(n, lx1)):
+                          put(x, y, (214, 57, 57, 255))
+
+              raw = bytearray()
+              for y in range(n):
+                  raw.append(0)
+                  off = y * n * 4
+                  raw += px[off:off+n*4]
+              sig = b"\x89PNG\r\n\x1a\n"
+              ihdr = struct.pack(">IIBBBBB", n, n, 8, 6, 0, 0, 0)
+              return sig + png_chunk(b"IHDR", ihdr) + png_chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + png_chunk(b"IEND", b"")
+
+          sizes = [16, 20, 24, 32, 48, 64, 128, 256]
+          imgs = [(n, make_png(n)) for n in sizes]
+          header = struct.pack("<HHH", 0, 1, len(imgs))
+          offset = 6 + 16 * len(imgs)
+          entries = []
+          payload = bytearray()
+          for n, data in imgs:
+              wh = 0 if n == 256 else n
+              entries.append(struct.pack("<BBBBHHII", wh, wh, 0, 0, 1, 32, len(data), offset))
+              payload += data
+              offset += len(data)
+          Path("gfx/ModernPDF.ico").write_bytes(header + b"".join(entries) + payload)
+
+          rc = Path("src/SumatraPDF.rc")
+          s = rc.read_text(encoding="utf-8")
+          replacements = {
+              'IDI_SUMATRAPDF          ICON "..\\\\gfx\\\\SumatraPDF-smaller.ico"': 'IDI_SUMATRAPDF          ICON "..\\\\gfx\\\\ModernPDF.ico"',
+              '2                       ICON "..\\\\gfx\\\\SumatraPDF-smaller.ico"': '2                       ICON "..\\\\gfx\\\\ModernPDF.ico"',
+              '8                       ICON "..\\\\gfx\\\\pdf-32bit.ico"': '8                       ICON "..\\\\gfx\\\\ModernPDF.ico"',
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f"resource line not found: {old}")
+              s = s.replace(old, new, 1)
+          rc.write_text(s, encoding="utf-8", newline="")
+
+      - name: Commit v0.2 source changes
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/Toolbar.cpp src/gui/win/TabsCtrl.cpp src/SumatraPDF.rc gfx/ModernPDF.ico
+          git commit -m "ui: edge-style tabs, zen fullscreen, fluent pdf icon"
+          git push origin HEAD:modern-ui/v0.1-shell
