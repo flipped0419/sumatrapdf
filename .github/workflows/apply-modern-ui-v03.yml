@@ -1,0 +1,364 @@
+name: Apply Modern UI v0.3
+
+on:
+  push:
+    branches:
+      - modern-ui/v0.1-shell
+    paths:
+      - .github/workflows/apply-modern-ui-v03.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    name: Apply Edge tab strip and windowed borderless mode
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Patch modern shell v0.3
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text(encoding="utf-8")
+              if old not in s:
+                  raise SystemExit(f"expected text not found in {path}: {old[:120]!r}")
+              s = s.replace(old, new, 1)
+              p.write_text(s, encoding="utf-8", newline="")
+
+          # --- Edge-like tab hierarchy ---------------------------------------
+          replace_once(
+              "src/gui/win/TabsCtrl.cpp",
+              """static Color TabTextColorForBackground(Color text, Color tabBg) {
+              if (abs((int)GetLightness(text) - (int)GetLightness(tabBg)) >= 80) {
+                  return text;
+              }
+              return IsLightColor(tabBg) ? kColBlack : kColWhite;
+          }
+          """,
+              """static Color TabTextColorForBackground(Color text, Color tabBg) {
+              if (abs((int)GetLightness(text) - (int)GetLightness(tabBg)) >= 80) {
+                  return text;
+              }
+              return IsLightColor(tabBg) ? kColBlack : kColWhite;
+          }
+
+          // Edge uses a tinted tab strip with the selected tab sitting on a
+          // lighter document surface. Sumatra's Light theme gives both the tab
+          // host and selected tab the same white control color, which made the
+          // rounded shape almost disappear.
+          static Color ModernTabStripBg(Color selectedBg) {
+              if (IsLightColor(selectedBg)) {
+                  return MkRgb(0xE9, 0xEA, 0xEC);
+              }
+              return AccentColor(selectedBg, 18);
+          }
+          """,
+          )
+
+          replace_once(
+              "src/gui/win/TabsCtrl.cpp",
+              """    if (isSelected) {
+                  return selected;
+              }
+              return AccentColor(selected, isUnderMouse ? 35 : 25);
+          }""",
+              """    if (isSelected) {
+                  return selected;
+              }
+              Color strip = ModernTabStripBg(selected);
+              if (isUnderMouse) {
+                  return IsLightColor(selected) ? MkRgb(0xF3, 0xF3, 0xF3) : AccentColor(selected, 28);
+              }
+              // Unselected default tabs disappear into the strip, as in Edge;
+              // only hover and the selected tab create a card surface.
+              return strip;
+          }""",
+          )
+
+          replace_once(
+              "src/gui/win/TabsCtrl.cpp",
+              """    Rect tabSurface = r;
+              int gap = DpiScale(2);
+              tabSurface.x += gap;
+              tabSurface.dx = std::max(0, tabSurface.dx - (gap * 2));
+              tabSurface.y += gap;
+              tabSurface.dy = std::max(0, tabSurface.dy - gap);
+              gfx->FillRoundedRect(tabSurface, DpiScale(IsSelected() ? 10 : 8), tabBgCol);""",
+              """    Rect tabSurface = r;
+              int gapX = DpiScale(2);
+              int gapTop = DpiScale(3);
+              tabSurface.x += gapX;
+              tabSurface.dx = std::max(0, tabSurface.dx - (gapX * 2));
+              tabSurface.y += gapTop;
+              tabSurface.dy = std::max(0, tabSurface.dy - gapTop);
+              gfx->FillRoundedRect(tabSurface, DpiScale(IsSelected() ? 11 : 9), tabBgCol);""",
+          )
+
+          replace_once(
+              "src/gui/win/TabsCtrl.cpp",
+              """            Color bgCol = GetColor(kColTabBg);
+              if (vroot) {
+                  PaintVirtTree(vroot, hdc, clientRc, bgCol);
+              } else {
+                  // no tabs: nothing but the background
+                  HdcFillRect(hdc, clientRc, bgCol);
+              }""",
+              """            Color bgCol = ModernTabStripBg(GetColor(kColTabBg));
+              if (vroot) {
+                  PaintVirtTree(vroot, hdc, clientRc, bgCol);
+              } else {
+                  // no tabs: nothing but the background
+                  HdcFillRect(hdc, clientRc, bgCol);
+              }""",
+          )
+
+          # --- True windowed borderless mode --------------------------------
+          # Undo v0.2's fullscreen reinterpretation. Borderless is now its own
+          # state; actual fullscreen keeps upstream behavior.
+          replace_once(
+              "src/Toolbar.cpp",
+              """static int ToolbarModeForWindow(MainWindow* win) {
+              if (win->isFullScreen) {
+                  int mode = FullscreenToolbarModeFromPrefs();
+                  // Modern fork: fullscreen doubles as a distraction-free reading mode.
+                  // Preserve an explicit pinned toolbar, otherwise reveal it only when
+                  // the pointer touches the top edge instead of hiding it permanently.
+                  return mode == kToolbarShow ? kToolbarShow : kToolbarOverlay;
+              }
+              return ToolbarModeFromPrefs();
+          }""",
+              """static int ToolbarModeForWindow(MainWindow* win) {
+              if (win->isBorderlessWindow) {
+                  // Borderless reading is windowed: keep the normal window rect,
+                  // but float the toolbar over the page and reveal it at the top edge.
+                  return kToolbarOverlay;
+              }
+              if (win->isFullScreen) {
+                  return FullscreenToolbarModeFromPrefs();
+              }
+              return ToolbarModeFromPrefs();
+          }""",
+          )
+
+          replace_once(
+              "src/MainWindow.h",
+              """    bool isFullScreen = false;
+              // chrome-less always-on-top preview from Explorer Space (issue #2568)""",
+              """    bool isFullScreen = false;
+              // Windowed frameless reading mode. Unlike fullscreen this preserves
+              // the current window size/position and the Windows taskbar.
+              bool isBorderlessWindow = false;
+              long borderlessWindowStyle = 0;
+              // chrome-less always-on-top preview from Explorer Space (issue #2568)""",
+          )
+
+          replace_once(
+              "src/SumatraPDF.h",
+              """void ToggleFullScreen(MainWindow* win, bool presentation = false);""",
+              """void ToggleFullScreen(MainWindow* win, bool presentation = false);
+          void ToggleBorderlessWindow(MainWindow* win);""",
+          )
+
+          # Add the command at the tail so existing command ids don't get renumbered.
+          replace_once(
+              "cmd/gen-commands.ts",
+              """    \"CmdApplyRedactions\", \"Apply Redactions\",
+              \"CmdNone\", \"Do nothing\",""",
+              """    \"CmdApplyRedactions\", \"Apply Redactions\",
+              \"CmdToggleBorderlessWindow\", \"Toggle Borderless Window\",
+              \"CmdNone\", \"Do nothing\",""",
+          )
+
+          # F11 is the quick borderless-reading toggle. True fullscreen remains
+          # available on Ctrl+Shift+L and the existing 'F' binding.
+          replace_once(
+              "src/Accelerators.cpp",
+              """    {FVIRTKEY, VK_F11, CmdToggleFullscreen},""",
+              """    {FVIRTKEY, VK_F11, CmdToggleBorderlessWindow},""",
+          )
+
+          # Borderless state should never reserve caption/tab-bar space.
+          replace_once(
+              "src/SumatraPDF.cpp",
+              """    bool showCaption = !win->presentation && !win->isFullScreen && win->tabsInTitlebar;
+              bool showingMenuBar = IsShowingMenuBarRebar(win);
+              bool showTabsBar = !win->presentation && !win->isFullScreen && !win->tabsInTitlebar && win->tabsVisible;""",
+              """    bool showCaption =
+                  !win->presentation && !win->isFullScreen && !win->isBorderlessWindow && win->tabsInTitlebar;
+              bool showingMenuBar = IsShowingMenuBarRebar(win);
+              bool showTabsBar = !win->presentation && !win->isFullScreen && !win->isBorderlessWindow &&
+                                 !win->tabsInTitlebar && win->tabsVisible;""",
+          )
+
+          replace_once(
+              "src/SumatraPDF.cpp",
+              """    if (IsZoomed(win->hwndFrame) || win->isFullScreen || win->presentation) {""",
+              """    if (IsZoomed(win->hwndFrame) || win->isFullScreen || win->isBorderlessWindow || win->presentation) {""",
+          )
+
+          replace_once(
+              "src/SumatraPDF.cpp",
+              """    if (!win->presentation && !win->isFullScreen && IsMenubarVisible()) {""",
+              """    if (!win->presentation && !win->isFullScreen && !win->isBorderlessWindow && IsMenubarVisible()) {""",
+          )
+
+          # Hide the normal tab/caption row while borderless. Leaving tabsVisible
+          # coherent lets UpdateTabWidth restore it cleanly on exit.
+          replace_once(
+              "src/Tabs.cpp",
+              """void UpdateTabWidth(MainWindow* win) {
+              int nTabs = win->TabCount();""",
+              """void UpdateTabWidth(MainWindow* win) {
+              if (win->isBorderlessWindow) {
+                  ShowTabBar(win, false);
+                  return;
+              }
+              int nTabs = win->TabCount();""",
+          )
+
+          # Insert windowed borderless implementation immediately before the
+          # existing fullscreen implementation so it can reuse frame helpers.
+          replace_once(
+              "src/SumatraPDF.cpp",
+              """void EnterFullScreen(MainWindow* win, bool presentation) {""",
+              """static void EnterBorderlessWindow(MainWindow* win) {
+              if (!win || win->isBorderlessWindow || win->isFullScreen || win->presentation || gPluginMode) {
+                  return;
+              }
+
+              HWND hwnd = win->hwndFrame;
+              win->borderlessWindowStyle = GetWindowLong(hwnd, GWL_STYLE);
+              Rect rect = HwndWindowRect(hwnd);
+              win->isBorderlessWindow = true;
+
+              BeginFrameRedrawSuppression(win);
+              SetMenu(hwnd, nullptr);
+              DestroyMenuBarRebar(win);
+
+              // Keep WS_THICKFRAME so Windows still provides resize semantics,
+              // but hide its DWM border. Removing WS_CAPTION removes the native
+              // titlebar without changing the outer window rectangle.
+              long ws = win->borderlessWindowStyle & ~WS_CAPTION;
+              SetWindowLong(hwnd, GWL_STYLE, ws);
+              if (!IsRunningOnWine()) {
+                  SetWindowRoundedCorners(hwnd, true);
+              }
+              SetWindowPos(hwnd, nullptr, rect.x, rect.y, rect.dx, rect.dy,
+                           SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER);
+
+              UpdateTabWidth(win);
+              ShowOrHideToolbar(win);
+              // Enter quietly: the first top-edge mouse move reveals the overlay.
+              win->toolbarOverlayShown = false;
+              RelayoutFrame(win);
+              PositionOverlayToolbar(win);
+              UpdateWindowFrameBorderColor(win);
+              EndFrameRedrawSuppression(win);
+          }
+
+          static void ExitBorderlessWindow(MainWindow* win) {
+              if (!win || !win->isBorderlessWindow) {
+                  return;
+              }
+
+              HWND hwnd = win->hwndFrame;
+              Rect rect = HwndWindowRect(hwnd);
+              BeginFrameRedrawSuppression(win);
+              win->isBorderlessWindow = false;
+
+              SetWindowLong(hwnd, GWL_STYLE, win->borderlessWindowStyle);
+              SetWindowPos(hwnd, nullptr, rect.x, rect.y, rect.dx, rect.dy,
+                           SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER);
+              if (!IsRunningOnWine()) {
+                  SetWindowRoundedCorners(hwnd, true);
+              }
+
+              RebuildMenuBarForWindow(win);
+              UpdateTabWidth(win);
+              ShowOrHideToolbar(win);
+              RelayoutFrame(win);
+              UpdateWindowFrameBorderColor(win);
+              EndFrameRedrawSuppression(win);
+          }
+
+          void ToggleBorderlessWindow(MainWindow* win) {
+              if (!win) {
+                  return;
+              }
+              if (win->isBorderlessWindow) {
+                  ExitBorderlessWindow(win);
+              } else {
+                  EnterBorderlessWindow(win);
+              }
+          }
+
+          void EnterFullScreen(MainWindow* win, bool presentation) {""",
+          )
+
+          # Dispatch the new command next to fullscreen.
+          replace_once(
+              "src/SumatraPDF.cpp",
+              """        case CmdToggleFullscreen:
+                  if (ShouldToggle(cmd, win->isFullScreen)) {
+                      ToggleFullScreen(win);
+                  }
+                  break;""",
+              """        case CmdToggleFullscreen:
+                  if (ShouldToggle(cmd, win->isFullScreen)) {
+                      ToggleFullScreen(win);
+                  }
+                  break;
+
+              case CmdToggleBorderlessWindow:
+                  if (ShouldToggle(cmd, win->isBorderlessWindow)) {
+                      ToggleBorderlessWindow(win);
+                  }
+                  break;""",
+          )
+
+          # Give a hidden borderless window a narrow draggable band just below
+          # the resize edge. The overlay toolbar, when visible, is its own child
+          # window and still receives its buttons normally.
+          replace_once(
+              "src/SumatraPDF.cpp",
+              """            {
+                  Point pt{x, y};
+                  Rect rClient = HwndMapRectToWindow(HwndClientRect(hwnd), hwnd, HWND_DESKTOP);""",
+              """            if (win->isBorderlessWindow && !IsZoomed(hwnd)) {
+                  int fromTop = y - wrc.y;
+                  int dragBand = DpiScale(22);
+                  if (fromTop > kFrameResizeHitTest && fromTop < dragBand) {
+                      *callDef = false;
+                      return HTCAPTION;
+                  }
+              }
+
+              {
+                  Point pt{x, y};
+                  Rect rClient = HwndMapRectToWindow(HwndClientRect(hwnd), hwnd, HWND_DESKTOP);""",
+          )
+
+      - name: Regenerate commands
+        shell: pwsh
+        run: bun .\cmd\gen-commands.ts
+
+      - name: Commit v0.3 source changes
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cmd/gen-commands.ts src/Commands.cpp src/Commands.h src/Accelerators.cpp src/MainWindow.h src/SumatraPDF.h src/SumatraPDF.cpp src/Tabs.cpp src/Toolbar.cpp src/gui/win/TabsCtrl.cpp
+          git commit -m "ui: edge tab strip and windowed borderless mode"
+          git push origin HEAD:modern-ui/v0.1-shell
