@@ -122,6 +122,10 @@ static void ShowTabBar(MainWindow* win, bool show) {
 
 // also shows/hides the tabbar when necessary
 void UpdateTabWidth(MainWindow* win) {
+    if (win->isBorderlessWindow) {
+        ShowTabBar(win, false);
+        return;
+    }
     int nTabs = win->TabCount();
     // Hide a lone Home tab. Keeping its tab bar open after the last document
     // closed fought RelayoutCaption and caused a continuous repaint storm

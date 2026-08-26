@@ -119,7 +119,7 @@ static ACCEL gBuiltInAccelerators[] = {
     {FVIRTKEY, VK_F5, CmdTogglePresentationMode},
     {FSHIFT | FVIRTKEY, VK_F11, CmdTogglePresentationMode},
     {FSHIFT | FCONTROL | FVIRTKEY, 'L', CmdToggleFullscreen},
-    {FVIRTKEY, VK_F11, CmdToggleFullscreen},
+    {FVIRTKEY, VK_F11, CmdToggleBorderlessWindow},
     {FVIRTKEY, VK_F12, CmdToggleBookmarks},
     {FSHIFT | FVIRTKEY, VK_F12, CmdCommandPaletteTOC},
     {FSHIFT | FCONTROL | FVIRTKEY, VK_SUBTRACT, CmdRotateLeft},

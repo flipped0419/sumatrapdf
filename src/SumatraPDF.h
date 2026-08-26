@@ -221,6 +221,7 @@ bool AutoReloadFileStillChanging(WindowTab* tab);
 void DeleteControllerAsync(DocController* ctrl);
 void WaitForPendingControllerDeletes();
 void ToggleFullScreen(MainWindow* win, bool presentation = false);
+void ToggleBorderlessWindow(MainWindow* win);
 
 // flags for ScheduleUiUpdate
 // relayout unless nothing layout-affecting changed (RelayoutFrame compares
