@@ -52,7 +52,7 @@
 
 // https://docs.microsoft.com/en-us/windows/win32/controls/toolbar-control-reference
 
-constexpr int kButtonSpacingX = 4;
+constexpr int kButtonSpacingX = 6;
 
 // distance between label and edit field
 constexpr int kTextPaddingRight = 6;
@@ -167,10 +167,45 @@ static Color TbEdgeColor() {
     return ThemeEdgeColor();
 }
 
+// Toolbar-only icon button with Fluent-style rounded hover/selected surfaces.
+// Keeping this local avoids changing generic VirtIconButton behavior elsewhere.
+struct ToolbarIconButton : VirtIconButton {
+    void Paint(VirtPaintCtx& ctx) override {
+        bool enabled = IsEnabled();
+        int dropDx = DropdownDx();
+        Rect action = ctx.bounds;
+        Rect drop = ctx.bounds;
+        if (dropDx > 0) {
+            action.dx -= dropDx;
+            drop.x = ctx.bounds.Right() - dropDx;
+            drop.dx = dropDx;
+        }
+
+        int radius = DpiScale(6);
+        Color bgSel = GetColor(kColIconBtnBgSelected);
+        if (isSelected && enabled && bgSel != kColorUnset) {
+            ctx.gfx->FillRoundedRect(action, radius, bgSel);
+        }
+        Color bgHover = GetColor(kColIconBtnBgHover);
+        if (enabled && HasFlag(vwfHovered) && bgHover != kColorUnset) {
+            Rect hi = (dropDx > 0 && hoverOnDropdown) ? drop : action;
+            ctx.gfx->FillRoundedRect(hi, radius, bgHover);
+        }
+
+        // Base painting still handles the icon, disabled state and chevron.
+        // Suppress only its square background fills for this paint pass.
+        SetColor(kColIconBtnBgSelected, kColorUnset);
+        SetColor(kColIconBtnBgHover, kColorUnset);
+        VirtIconButton::Paint(ctx);
+        SetColor(kColIconBtnBgSelected, bgSel);
+        SetColor(kColIconBtnBgHover, bgHover);
+    }
+};
+
 // Old Win32 toolbar: TBMETRICS.cyPad defaults to 6, then we added DpiScale(2).
 // TB_SETBUTTONSIZE cannot go below image + 2*cyPad, so that was the bar height.
 static int ToolbarCyPad() {
-    return 6 + DpiScale(2);
+    return DpiScale(9);
 }
 
 static int ToolbarRowDy(int iconSize) {
@@ -1334,7 +1369,7 @@ static void OnToolbarButtonClicked(MainWindow* win, VirtMouseEvent* ev) {
 
 static void PaintToolbarSeparator(VirtCustom*, VirtPaintCtx* ctx) {
     Rect r = ctx->bounds;
-    int inset = DpiScale(6);
+    int inset = DpiScale(9);
     int dy = r.dy - (2 * inset);
     if (dy <= 0) {
         return;
@@ -1345,7 +1380,7 @@ static void PaintToolbarSeparator(VirtCustom*, VirtPaintCtx* ctx) {
 
 static VirtCtrl* MakeToolbarSeparator(int rowDy) {
     auto* sep = new VirtCustom();
-    sep->idealSize = {DpiScale(8), rowDy};
+    sep->idealSize = {DpiScale(12), rowDy};
     sep->onPaint = MkFunc1(PaintToolbarSeparator, sep);
     sep->SetFlag(vwfNoHitTest, true);
     return sep;
@@ -1365,7 +1400,7 @@ static void BuildToolbarLayout(MainWindow* win) {
     win->pageEdit = nullptr;
 
     int cyPad = ToolbarCyPad();
-    int iconPad = DpiScale(6);
+    int iconPad = DpiScale(8);
     tb->rowDy = ToolbarRowDy(tb->iconSize);
     Color fg = TbTextColor();
     Color dis = TbDisabledColor();
@@ -1413,7 +1448,7 @@ static void BuildToolbarLayout(MainWindow* win) {
             b->textPadding = {cyPad, iconPad, cyPad, iconPad};
             w = b;
         } else {
-            auto* ib = new VirtIconButton();
+            auto* ib = new ToolbarIconButton();
             ib->padding = {cyPad, iconPad, cyPad, iconPad};
             ib->hasDropdown = (bi.cmdId == CmdReadAloud);
             Str svg = bi.svgIcon ? bi.svgIcon : Str(bi.icon);
@@ -1443,7 +1478,7 @@ static void BuildToolbarLayout(MainWindow* win) {
         if (!HasToolbarButtonContent(bi)) {
             w = MakeToolbarSeparator(tb->rowDy);
         } else {
-            auto* ib = new VirtIconButton();
+            auto* ib = new ToolbarIconButton();
             ib->padding = {cyPad, iconPad, cyPad, iconPad};
             ib->pixmap = GetCachedPixmapForSvg(Str(bi.icon), tb->iconSize, tb->iconSize, fg, TbBgColor());
             ib->pixmapDisabled = GetCachedPixmapForSvg(Str(bi.icon), tb->iconSize, tb->iconSize, dis, TbBgColor());
@@ -1463,8 +1498,8 @@ static void BuildToolbarLayout(MainWindow* win) {
 
     auto* root = new VBox();
     root->alignCross = CrossAxisAlign::Stretch;
-    root->AddChild(new Padding(box, Insets{0, DpiScale(4), 0, DpiScale(4)}));
-    tb->annotationRow = new Padding(annotationBox, Insets{0, DpiScale(4), 0, DpiScale(4)});
+    root->AddChild(new Padding(box, Insets{0, DpiScale(8), 0, DpiScale(8)}));
+    tb->annotationRow = new Padding(annotationBox, Insets{0, DpiScale(8), 0, DpiScale(8)});
     tb->annotationRow->SetVisibility(Visibility::Collapse);
     root->AddChild(tb->annotationRow);
     tb->host->SetLayout(root);
