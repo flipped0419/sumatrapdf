@@ -3230,11 +3230,11 @@ void ShowMainWindow(MainWindow* win, int windowState) {
         SetWindowPos(win->hwndFrame, nullptr, 0, 0, 0, 0, flags);
     }
 
-    // go fullscreen before the first paint so the user doesn't see the
-    // intermediate maximized window (EnterFullScreen requires a visible
-    // window, so it can't happen before ShowWindow above)
-    if (WIN_STATE_FULLSCREEN == windowState) {
-        EnterFullScreen(win);
+    // Modern fork: every newly shown reader window starts in windowed
+    // borderless reading mode. This preserves the current window rectangle
+    // and taskbar instead of using true fullscreen.
+    if (!win->isBorderlessWindow && !gPluginMode) {
+        ToggleBorderlessWindow(win);
     }
 
     // Hidden startup windows can miss the final titlebar/menu-bar geometry

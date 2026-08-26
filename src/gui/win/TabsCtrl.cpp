@@ -63,16 +63,6 @@ static Color TabTextColorForBackground(Color text, Color tabBg) {
     return IsLightColor(tabBg) ? kColBlack : kColWhite;
 }
 
-// Edge uses a tinted tab strip with the selected tab sitting on a lighter
-// document surface. Sumatra's Light theme otherwise gives both the host and
-// selected tab the same white control color, hiding the rounded silhouette.
-static Color ModernTabStripBg(Color selectedBg) {
-    if (IsLightColor(selectedBg)) {
-        return MkRgb(0xE9, 0xEA, 0xEC);
-    }
-    return AccentColor(selectedBg, 18);
-}
-
 //--- TabCtrl: one tab
 
 // paints the tab (background, title, dirty dot) and hosts its ✕. It doesn't own
@@ -150,13 +140,7 @@ Color TabCtrl::BgColor() {
     if (isSelected) {
         return selected;
     }
-    Color strip = ModernTabStripBg(selected);
-    if (isUnderMouse) {
-        return IsLightColor(selected) ? MkRgb(0xF3, 0xF3, 0xF3) : AccentColor(selected, 28);
-    }
-    // Default unselected tabs blend into the strip, like Edge. Hovering creates
-    // a subtle card, while the selected tab remains the bright document surface.
-    return strip;
+    return AccentColor(selected, isUnderMouse ? 35 : 25);
 }
 
 Size TabCtrl::GetIdealSize() {
@@ -220,8 +204,7 @@ void TabCtrl::SetBounds(Rect r) {
 // like Chrome: only the selected tab shows (and hit-tests) its ✕, so a click
 // on a non-selected tab always selects it and can't accidentally close it
 bool TabCtrl::CloseVisible() {
-    // Browser-style tabs keep the close affordance visible, like Edge.
-    return ti->canClose;
+    return ti->canClose && IsSelected();
 }
 
 void TabCtrl::Paint(VirtPaintCtx& ctx) {
@@ -236,28 +219,7 @@ void TabCtrl::Paint(VirtPaintCtx& ctx) {
         textColor = IsLightColor(tabBgCol) ? MkRgb(0xC4, 0x1E, 0x1E) : MkRgb(0xFF, 0x6A, 0x6A);
     }
 
-    // Browser-style tab silhouette. An active browser tab is not a floating
-    // pill: only its top is rounded and its bottom joins the content surface.
-    // Hovered/inactive tabs can remain fully rounded cards.
-    Rect tabSurface = r;
-    int gapX = DpiScale(2);
-    int gapTop = DpiScale(3);
-    tabSurface.x += gapX;
-    tabSurface.dx = std::max(0, tabSurface.dx - (gapX * 2));
-    tabSurface.y += gapTop;
-    tabSurface.dy = std::max(0, tabSurface.dy - gapTop);
-    if (IsSelected()) {
-        int radius = DpiScale(9);
-        gfx->FillRoundedRect(tabSurface, radius, tabBgCol);
-        // Square the two lower corners so the selected tab visually flows into
-        // the toolbar/content row instead of looking like a detached capsule.
-        Rect lower = tabSurface;
-        lower.y = std::max(tabSurface.y, tabSurface.Bottom() - radius);
-        lower.dy = std::max(0, tabSurface.Bottom() - lower.y);
-        gfx->FillRect(lower, tabBgCol);
-    } else {
-        gfx->FillRoundedRect(tabSurface, DpiScale(8), tabBgCol);
-    }
+    gfx->FillRect(r, tabBgCol);
 
     bool isRtl = IsTabsRtl(hwnd);
     PlatformFont* font = tabsCtrl->GetFont();
@@ -985,7 +947,7 @@ LRESULT TabsCtrl::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             HDC hdc = GetDC(hwnd);
-            Color bgCol = ModernTabStripBg(GetColor(kColTabBg));
+            Color bgCol = GetColor(kColTabBg);
             if (vroot) {
                 PaintVirtTree(vroot, hdc, clientRc, bgCol);
             } else {
