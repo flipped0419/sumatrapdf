@@ -492,6 +492,10 @@ struct MainWindow {
     // a hide of the overlay toolbar is scheduled (after kDelayToolbarHide)
     bool toolbarOverlayHidePending = false;
     bool isFullScreen = false;
+    // Windowed frameless reading mode. Unlike fullscreen this preserves the
+    // current window size/position and keeps the Windows taskbar available.
+    bool isBorderlessWindow = false;
+    long borderlessWindowStyle = 0;
     // chrome-less always-on-top preview from Explorer Space (issue #2568)
     bool isQuickLook = false;
     PresentationMode presentation = PM_DISABLED;

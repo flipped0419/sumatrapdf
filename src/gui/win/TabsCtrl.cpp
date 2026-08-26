@@ -63,6 +63,16 @@ static Color TabTextColorForBackground(Color text, Color tabBg) {
     return IsLightColor(tabBg) ? kColBlack : kColWhite;
 }
 
+// Edge uses a tinted tab strip with the selected tab sitting on a lighter
+// document surface. Sumatra's Light theme otherwise gives both the host and
+// selected tab the same white control color, hiding the rounded silhouette.
+static Color ModernTabStripBg(Color selectedBg) {
+    if (IsLightColor(selectedBg)) {
+        return MkRgb(0xE9, 0xEA, 0xEC);
+    }
+    return AccentColor(selectedBg, 18);
+}
+
 //--- TabCtrl: one tab
 
 // paints the tab (background, title, dirty dot) and hosts its ✕. It doesn't own
@@ -140,7 +150,13 @@ Color TabCtrl::BgColor() {
     if (isSelected) {
         return selected;
     }
-    return AccentColor(selected, isUnderMouse ? 35 : 25);
+    Color strip = ModernTabStripBg(selected);
+    if (isUnderMouse) {
+        return IsLightColor(selected) ? MkRgb(0xF3, 0xF3, 0xF3) : AccentColor(selected, 28);
+    }
+    // Default unselected tabs blend into the strip, like Edge. Hovering creates
+    // a subtle card, while the selected tab remains the bright document surface.
+    return strip;
 }
 
 Size TabCtrl::GetIdealSize() {
@@ -223,12 +239,13 @@ void TabCtrl::Paint(VirtPaintCtx& ctx) {
     // Edge-style tab card: leave a small gutter between tabs and round
     // the painted surface without changing hit-testing or drag geometry.
     Rect tabSurface = r;
-    int gap = DpiScale(2);
-    tabSurface.x += gap;
-    tabSurface.dx = std::max(0, tabSurface.dx - (gap * 2));
-    tabSurface.y += gap;
-    tabSurface.dy = std::max(0, tabSurface.dy - gap);
-    gfx->FillRoundedRect(tabSurface, DpiScale(IsSelected() ? 10 : 8), tabBgCol);
+    int gapX = DpiScale(2);
+    int gapTop = DpiScale(3);
+    tabSurface.x += gapX;
+    tabSurface.dx = std::max(0, tabSurface.dx - (gapX * 2));
+    tabSurface.y += gapTop;
+    tabSurface.dy = std::max(0, tabSurface.dy - gapTop);
+    gfx->FillRoundedRect(tabSurface, DpiScale(IsSelected() ? 11 : 9), tabBgCol);
 
     bool isRtl = IsTabsRtl(hwnd);
     PlatformFont* font = tabsCtrl->GetFont();
@@ -956,7 +973,7 @@ LRESULT TabsCtrl::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             HDC hdc = GetDC(hwnd);
-            Color bgCol = GetColor(kColTabBg);
+            Color bgCol = ModernTabStripBg(GetColor(kColTabBg));
             if (vroot) {
                 PaintVirtTree(vroot, hdc, clientRc, bgCol);
             } else {

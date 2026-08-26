@@ -1038,7 +1038,7 @@ void RebuildMenuBarForWindow(MainWindow* win) {
     HMENU oldMenu = win->menu;
     win->menu = BuildMenu(win);
     bool redrawMenuBar = false;
-    if (!win->presentation && !win->isFullScreen && IsMenubarVisible()) {
+    if (!win->presentation && !win->isFullScreen && !win->isBorderlessWindow && IsMenubarVisible()) {
         if (win->tabsInTitlebar) {
             // use rebar menu bar instead of native menu when tabs are in titlebar
             if (IsShowingMenuBarRebar(win)) {
@@ -3042,7 +3042,7 @@ static void UpdateWindowFrameBorderColor(MainWindow* win) {
     }
     // Maximized / fullscreen can't edge-resize; hide the DWM border so it does
     // not show as a bright 1px seam against the taskbar (issue #5851).
-    if (IsZoomed(win->hwndFrame) || win->isFullScreen || win->presentation) {
+    if (IsZoomed(win->hwndFrame) || win->isFullScreen || win->isBorderlessWindow || win->presentation) {
         SetWindowBorderColor(win->hwndFrame, (Color)DWMWA_COLOR_NONE);
         return;
     }
@@ -7384,9 +7384,11 @@ static bool RelayoutFrame(MainWindow* win, bool updateToolbars, int sidebarDx) {
     bool tocVisible = !favAsTab && win->uiState.tocVisible;
     bool sidebarVisible = !favAsTab && (tocVisible || win->uiState.favVisible);
     bool aiChatVisible = !favAsTab && win->uiState.aiChatVisible && win->hwndAiChatBox;
-    bool showCaption = !win->presentation && !win->isFullScreen && win->tabsInTitlebar;
+    bool showCaption =
+        !win->presentation && !win->isFullScreen && !win->isBorderlessWindow && win->tabsInTitlebar;
     bool showingMenuBar = IsShowingMenuBarRebar(win);
-    bool showTabsBar = !win->presentation && !win->isFullScreen && !win->tabsInTitlebar && win->tabsVisible;
+    bool showTabsBar = !win->presentation && !win->isFullScreen && !win->isBorderlessWindow &&
+                       !win->tabsInTitlebar && win->tabsVisible;
     bool showMenuRebar = showingMenuBar && (!win->tabsInTitlebar || win->isFullScreen);
     bool showToolbar = win->isToolbarVisible;
     bool toolbarBottom = showToolbar && ToolbarAtBottom();
@@ -8477,6 +8479,74 @@ static void OnMenuGoToPage(MainWindow* win) {
     }
 
     ShowGoToPageDialog(win);
+}
+
+static void EnterBorderlessWindow(MainWindow* win) {
+    if (!win || win->isBorderlessWindow || win->isFullScreen || win->presentation || gPluginMode) {
+        return;
+    }
+
+    HWND hwnd = win->hwndFrame;
+    win->borderlessWindowStyle = GetWindowLong(hwnd, GWL_STYLE);
+    Rect rect = HwndWindowRect(hwnd);
+    win->isBorderlessWindow = true;
+
+    BeginFrameRedrawSuppression(win);
+    SetMenu(hwnd, nullptr);
+    DestroyMenuBarRebar(win);
+
+    long ws = win->borderlessWindowStyle & ~WS_CAPTION;
+    SetWindowLong(hwnd, GWL_STYLE, ws);
+    if (!IsRunningOnWine()) {
+        SetWindowRoundedCorners(hwnd, true);
+    }
+    SetWindowPos(hwnd, nullptr, rect.x, rect.y, rect.dx, rect.dy,
+                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER);
+
+    UpdateTabWidth(win);
+    ShowOrHideToolbar(win);
+    // Enter quietly. Existing top-edge tracking reveals the overlay on demand.
+    win->toolbarOverlayShown = false;
+    RelayoutFrame(win);
+    PositionOverlayToolbar(win);
+    UpdateWindowFrameBorderColor(win);
+    EndFrameRedrawSuppression(win);
+}
+
+static void ExitBorderlessWindow(MainWindow* win) {
+    if (!win || !win->isBorderlessWindow) {
+        return;
+    }
+
+    HWND hwnd = win->hwndFrame;
+    Rect rect = HwndWindowRect(hwnd);
+    BeginFrameRedrawSuppression(win);
+    win->isBorderlessWindow = false;
+
+    SetWindowLong(hwnd, GWL_STYLE, win->borderlessWindowStyle);
+    SetWindowPos(hwnd, nullptr, rect.x, rect.y, rect.dx, rect.dy,
+                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER);
+    if (!IsRunningOnWine()) {
+        SetWindowRoundedCorners(hwnd, true);
+    }
+
+    RebuildMenuBarForWindow(win);
+    UpdateTabWidth(win);
+    ShowOrHideToolbar(win);
+    RelayoutFrame(win);
+    UpdateWindowFrameBorderColor(win);
+    EndFrameRedrawSuppression(win);
+}
+
+void ToggleBorderlessWindow(MainWindow* win) {
+    if (!win) {
+        return;
+    }
+    if (win->isBorderlessWindow) {
+        ExitBorderlessWindow(win);
+    } else {
+        EnterBorderlessWindow(win);
+    }
 }
 
 void EnterFullScreen(MainWindow* win, bool presentation) {
@@ -11762,6 +11832,12 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
             }
             break;
 
+        case CmdToggleBorderlessWindow:
+            if (ShouldToggle(cmd, win->isBorderlessWindow)) {
+                ToggleBorderlessWindow(win);
+            }
+            break;
+
         case CmdRotateLeft:
             if (dm) {
                 dm->RotateBy(-90);
@@ -13201,6 +13277,15 @@ static LRESULT CustomCaptionFrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                     }
                     *callDef = false;
                     return HTCLIENT;
+                }
+            }
+
+            if (win->isBorderlessWindow && !IsZoomed(hwnd)) {
+                int fromTop = y - wrc.y;
+                int dragBand = DpiScale(22);
+                if (fromTop > kFrameResizeHitTest && fromTop < dragBand) {
+                    *callDef = false;
+                    return HTCAPTION;
                 }
             }
 

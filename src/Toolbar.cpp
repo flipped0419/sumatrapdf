@@ -782,12 +782,13 @@ void TogglePdfAnnotationsToolbar(MainWindow* win) {
 
 // toolbar mode for this window: Fullscreen.Toolbar in fullscreen, else Toolbar
 static int ToolbarModeForWindow(MainWindow* win) {
+    if (win->isBorderlessWindow) {
+        // Windowed borderless reading keeps the window rect/taskbar, while the
+        // main toolbar floats over the page and is revealed at the top edge.
+        return kToolbarOverlay;
+    }
     if (win->isFullScreen) {
-        int mode = FullscreenToolbarModeFromPrefs();
-        // Modern fork: fullscreen doubles as a distraction-free reading mode.
-        // Preserve an explicit pinned toolbar, otherwise reveal it only when
-        // the pointer touches the top edge instead of hiding it permanently.
-        return mode == kToolbarShow ? kToolbarShow : kToolbarOverlay;
+        return FullscreenToolbarModeFromPrefs();
     }
     return ToolbarModeFromPrefs();
 }

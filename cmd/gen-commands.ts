@@ -300,6 +300,7 @@ export const commands = [
     "CmdConfigurePageGrid", "Configure Page Grid...",
     "CmdTogglePdfAnnotationsToolbar", "Toggle PDF Annotations Toolbar",
     "CmdApplyRedactions", "Apply Redactions",
+    "CmdToggleBorderlessWindow", "Toggle Borderless Window",
     "CmdNone", "Do nothing",
 ];
 
