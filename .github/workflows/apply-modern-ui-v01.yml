@@ -1,0 +1,135 @@
+name: Apply Modern UI v0.1
+
+on:
+  push:
+    branches:
+      - modern-ui/v0.1-shell
+    paths:
+      - .github/workflows/apply-modern-ui-v01.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-build:
+    name: Patch and build x64 Release
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply modern toolbar patch
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          path = Path("src/Toolbar.cpp")
+          s = path.read_text(encoding="utf-8")
+
+          def replace_once(old: str, new: str) -> None:
+              global s
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one match, got {count}: {old[:80]!r}")
+              s = s.replace(old, new, 1)
+
+          replace_once("constexpr int kButtonSpacingX = 4;", "constexpr int kButtonSpacingX = 6;")
+
+          anchor = '''static Color TbEdgeColor() {
+              return ThemeEdgeColor();
+          }
+          '''
+          modern_button = '''static Color TbEdgeColor() {
+              return ThemeEdgeColor();
+          }
+
+          // Toolbar-only icon button with Fluent-style rounded hover/selected surfaces.
+          // Keeping this local avoids changing generic VirtIconButton behavior elsewhere.
+          struct ToolbarIconButton : VirtIconButton {
+              void Paint(VirtPaintCtx& ctx) override {
+                  bool enabled = IsEnabled();
+                  int dropDx = DropdownDx();
+                  Rect action = ctx.bounds;
+                  Rect drop = ctx.bounds;
+                  if (dropDx > 0) {
+                      action.dx -= dropDx;
+                      drop.x = ctx.bounds.Right() - dropDx;
+                      drop.dx = dropDx;
+                  }
+
+                  int radius = DpiScale(6);
+                  Color bgSel = GetColor(kColIconBtnBgSelected);
+                  if (isSelected && enabled && bgSel != kColorUnset) {
+                      ctx.gfx->FillRoundedRect(action, radius, bgSel);
+                  }
+                  Color bgHover = GetColor(kColIconBtnBgHover);
+                  if (enabled && HasFlag(vwfHovered) && bgHover != kColorUnset) {
+                      Rect hi = (dropDx > 0 && hoverOnDropdown) ? drop : action;
+                      ctx.gfx->FillRoundedRect(hi, radius, bgHover);
+                  }
+
+                  // Base painting still handles the icon, disabled state and chevron.
+                  // Suppress only its square background fills for this paint pass.
+                  SetColor(kColIconBtnBgSelected, kColorUnset);
+                  SetColor(kColIconBtnBgHover, kColorUnset);
+                  VirtIconButton::Paint(ctx);
+                  SetColor(kColIconBtnBgSelected, bgSel);
+                  SetColor(kColIconBtnBgHover, bgHover);
+              }
+          };
+          '''
+          replace_once(anchor, modern_button)
+
+          replace_once('''static int ToolbarCyPad() {
+              return 6 + DpiScale(2);
+          }''', '''static int ToolbarCyPad() {
+              return DpiScale(9);
+          }''')
+
+          replace_once("    int inset = DpiScale(6);", "    int inset = DpiScale(9);")
+          replace_once("    sep->idealSize = {DpiScale(8), rowDy};", "    sep->idealSize = {DpiScale(12), rowDy};")
+          replace_once("    int iconPad = DpiScale(6);", "    int iconPad = DpiScale(8);")
+
+          count = s.count("auto* ib = new VirtIconButton();")
+          if count != 2:
+              raise SystemExit(f"expected two toolbar icon-button constructors, got {count}")
+          s = s.replace("auto* ib = new VirtIconButton();", "auto* ib = new ToolbarIconButton();")
+
+          replace_once(
+              "    root->AddChild(new Padding(box, Insets{0, DpiScale(4), 0, DpiScale(4)}));",
+              "    root->AddChild(new Padding(box, Insets{0, DpiScale(8), 0, DpiScale(8)}));",
+          )
+          replace_once(
+              "    tb->annotationRow = new Padding(annotationBox, Insets{0, DpiScale(4), 0, DpiScale(4)});",
+              "    tb->annotationRow = new Padding(annotationBox, Insets{0, DpiScale(8), 0, DpiScale(8)});",
+          )
+
+          path.write_text(s, encoding="utf-8", newline="\n")
+          '@ | python -
+
+      - name: Commit source change
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/Toolbar.cpp
+          git commit -m "ui: modernize toolbar shell"
+          git push origin HEAD:modern-ui/v0.1-shell
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Build x64 release
+        run: bun .\cmd\build.ts -release
+
+      - name: Upload v0.1 test executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SumatraModern-v0.1-x64
+          path: out/rel64/SumatraPDF.exe
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
